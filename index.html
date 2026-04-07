@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pocket Tanks: Next-Gen</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div id="top-bar">
+            <div class="panel player-info">
+                <span style="color: #ff5555; font-weight: bold;">PLAYER 1 (RED)</span>
+                <div class="health-bar-container"><div id="p1-health" class="health-bar"></div></div>
+                <div id="p1-shield" class="shield-indicator" style="display:none;">🛡 SHIELD</div>
+            </div>
+            
+            <div id="game-title" class="panel">
+                POCKET TANKS
+            </div>
+
+            <div class="panel player-info" style="align-items: flex-end;">
+                <span style="color: #00aaff; font-weight: bold;">PLAYER 2 (BLUE)</span>
+                <div class="health-bar-container"><div id="p2-health" class="health-bar"></div></div>
+                <div id="p2-shield" class="shield-indicator" style="display:none;">🛡 SHIELD</div>
+            </div>
+        </div>
+
+        <div id="turn-indicator">Player 1's Turn</div>
+
+        <div id="bottom-bar" class="panel">
+            <div class="control-group">
+                <label>Weapon</label>
+                <select id="weapon-select">
+                    <option value="dirtball">Dirt Ball</option>
+                    <option value="mortar">Mortar</option>
+                    <option value="rocket">Rocket</option>
+                    <option value="bigdaddy">Big Daddy</option>
+                    <option value="bouncy">Bouncy Ball</option>
+                    <option value="airstrike">Airstrike ✈</option>
+                    <option value="shield">Shield 🛡</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Angle (<span id="angle-val">45</span>&deg;)</label>
+                <input type="range" id="angle" min="0" max="180" value="45">
+            </div>
+            <div class="control-group">
+                <label>Power (<span id="power-val">50</span>)</label>
+                <input type="range" id="power" min="10" max="100" value="50">
+            </div>
+
+            <div class="control-group move-group">
+                <label>Move — Fuel: <span id="fuel-val">100%</span></label>
+                <div style="display:flex; gap:8px; justify-content:center;">
+                    <button id="move-left" class="move-btn" title="Move Left (A)">◀ LEFT</button>
+                    <button id="move-right" class="move-btn" title="Move Right (D)">RIGHT ▶</button>
+                </div>
+            </div>
+
+            <div class="control-group" style="justify-content: center;">
+                <button id="fire-btn" style="padding: 15px 30px; font-size: 18px; color: #fff; background: #c00; border-color: #f00;">FIRE (SPACE)</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="overlay">
+        <h1>POCKET TANKS</h1>
+        <p>Next-Gen Web Edition</p>
+        <button id="start-btn" style="font-size: 24px; padding: 15px 40px; margin-top: 20px;">START GAME</button>
+    </div>
+
+    <script src="projectile.js"></script>
+    <script src="sound.js"></script>
+    <script src="tank.js"></script>
+    <script src="game.js"></script>
+
+</body>
+</html>
