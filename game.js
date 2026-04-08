@@ -43,34 +43,52 @@ function generateTerrain() {
     }
 }
 
+const GRASS_DEPTH = 18; // how thick the green layer is
+
 function renderTerrain() {
     ctx.save();
+
+    // --- Sky ---
     const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
-    skyGrad.addColorStop(0, '#0a0a1a'); skyGrad.addColorStop(1, '#2a1a2a');
+    skyGrad.addColorStop(0, '#0a0a1a');
+    skyGrad.addColorStop(1, '#2a1a2a');
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, width, height);
 
+    // --- Dirt: everything below terrain surface ---
     ctx.beginPath();
     ctx.moveTo(0, height);
-    for (let x = 0; x < width; x++) ctx.lineTo(x, terrain[x]);
+    for (let x = 0; x < width; x++) ctx.lineTo(x, terrain[x] + GRASS_DEPTH);
     ctx.lineTo(width, height);
     ctx.closePath();
-    ctx.clip();
+    const dirtGrad = ctx.createLinearGradient(0, height * 0.4, 0, height);
+    dirtGrad.addColorStop(0, '#4a2e18');
+    dirtGrad.addColorStop(0.4, '#2e1a0e');
+    dirtGrad.addColorStop(1, '#0e0805');
+    ctx.fillStyle = dirtGrad;
+    ctx.fill();
 
-    const dirtGrad = ctx.createLinearGradient(0, height * 0.3, 0, height);
-    dirtGrad.addColorStop(0, '#3a2518'); dirtGrad.addColorStop(1, '#110a05');
-    ctx.fillStyle = dirtGrad; ctx.fill();
-
+    // --- Grass layer: band between surface and surface+GRASS_DEPTH ---
     ctx.beginPath();
     ctx.moveTo(0, terrain[0]);
     for (let x = 0; x < width; x++) ctx.lineTo(x, terrain[x]);
-    ctx.lineTo(width, terrain[width - 1] + 20); ctx.lineTo(0, terrain[0] + 20);
+    ctx.lineTo(width, terrain[width - 1]);
+    for (let x = width - 1; x >= 0; x--) ctx.lineTo(x, terrain[x] + GRASS_DEPTH);
     ctx.closePath();
-    ctx.fillStyle = '#2d5a1e'; ctx.fill();
+    const grassGrad = ctx.createLinearGradient(0, 0, 0, height);
+    grassGrad.addColorStop(0, '#5abf2a');
+    grassGrad.addColorStop(1, '#2d6612');
+    ctx.fillStyle = grassGrad;
+    ctx.fill();
 
+    // --- Bright top edge line ---
     ctx.beginPath();
-    for (let x = 0; x < width; x++) ctx.lineTo(x, terrain[x]);
-    ctx.lineWidth = 4; ctx.strokeStyle = '#4cb02c'; ctx.stroke();
+    ctx.moveTo(0, terrain[0]);
+    for (let x = 1; x < width; x++) ctx.lineTo(x, terrain[x]);
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#7fe040';
+    ctx.stroke();
+
     ctx.restore();
 }
 
@@ -106,6 +124,7 @@ function spawnParticle(x, y, color, size, vx = null, vy = null) {
 }
 
 function initGame() {
+    buildWeaponSelect();
     SoundEngine.init();
     generateTerrain();
     tanks = [new Tank(width * 0.15, '#ff2222', true), new Tank(width * 0.85, '#2266ff', false)];
@@ -143,37 +162,23 @@ function nextTurn() {
 function fire() {
     if (gameState !== 'playing') return;
 
-    // Handle shield weapon locally — no projectile
-    if (tanks[currentPlayer].weapon === 'shield') {
-        tanks[currentPlayer].shield = Math.min(MAX_SHIELD, tanks[currentPlayer].shield + MAX_SHIELD);
-        SoundEngine.play('ding');
-        texts.push({ x: tanks[currentPlayer].x, y: tanks[currentPlayer].y - 40, text: 'SHIELD UP!', color: '#00ccff', age: 0 });
-        gameState = 'animating';
-        nextTurn();
-        return;
+    const tank = tanks[currentPlayer];
+    const weapon = getWeapon(tank.weapon);
+
+    // Run weapon's custom onFire — if returns false, skip default projectile
+    if (weapon.onFire) {
+        const proceed = weapon.onFire(tank);
+        if (proceed === false) return;
     }
 
     gameState = 'animating';
     SoundEngine.init();
     SoundEngine.play('pew');
-    const tank = tanks[currentPlayer];
+
     const rad = -tank.angle * Math.PI / 180;
     const bx = tank.x + Math.cos(rad) * 25;
     const by = tank.y - TANK_HEIGHT + 2 + Math.sin(rad) * 25;
-    spawnParticle(bx, by, '#ffffaa', 8);
-
-    if (tank.weapon === 'airstrike') {
-        // Spawn 3 bombs from the top
-        for (let i = 0; i < 3; i++) {
-            setTimeout(() => {
-                const offsetX = tank.x + (Math.random() - 0.5) * 80;
-                projectiles.push(new Projectile(offsetX, -20, 90, tank.power, 'airstrike'));
-            }, i * 300);
-        }
-        // nextTurn triggered by last bomb
-        return;
-    }
-
+    spawnParticle(bx, by, weapon.color || '#ffffaa', 8);
     projectiles.push(new Projectile(bx, by, tank.angle, tank.power, tank.weapon));
 }
 
