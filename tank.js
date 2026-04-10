@@ -1,9 +1,14 @@
+const TANK_SLIDE_START_DEG = 52;
+const TANK_WALL_DETACH_DEG = 74;
+const TANK_AIR_DRIFT_DEG = 58;
+
 class Tank {
     constructor(x, color, isP1) {
         this.x = x; this.y = 0; this.color = color; this.isP1 = isP1;
         this.hp = MAX_HP; this.angle = isP1 ? 45 : 135; this.power = 50; this.weapon = 'dirtball';
         this.fuel = MAX_FUEL;
         this.shield = 0;
+        this.vx = 0;         // horizontal velocity for realistic slope sliding
         this.tilt = 0;       // current visual tilt in radians (from terrain slope)
         this.vy = 0;         // vertical velocity for gravity/sliding
         this.grounded = true;
@@ -47,8 +52,18 @@ class Tank {
         const rx = this.x + TANK_WIDTH / 2 - 4;
         const ly = this._terrainAt(lx);
         const ry = this._terrainAt(rx);
+        const tilt = Math.atan2(ry - ly, rx - lx);
+
+        // If the ground under the tank is extremely steep, don't hard-lock it to the wall.
+        if (Math.abs(tilt) > (TANK_WALL_DETACH_DEG * Math.PI / 180)) {
+            this.y = this._terrainAt(this.x);
+            this.tilt = tilt;
+            this.grounded = false;
+            return;
+        }
+
         this.y = (ly + ry) / 2;
-        this.tilt = this._computeTilt();
+        this.tilt = tilt;
         this.grounded = true;
         this.vy = 0;
     }
@@ -57,40 +72,63 @@ class Tank {
     update() {
         if (this.hp <= 0) return;
 
-        const centerTerrain = this._terrainAt(this.x);
         const supportFrac = this._supportedFraction();
+        const slope = this._computeTilt();
+        const slopeDeg = Math.abs(slope) * 180 / Math.PI;
+        const steepWall = slopeDeg > TANK_WALL_DETACH_DEG;
+        const wellSupported = supportFrac > 0.5;
 
-        if (supportFrac > 0.35) {
-            // Enough ground under tank — settle normally
+        if (wellSupported && !steepWall) {
+            // Grounded state: stick to terrain and slide along slope with friction.
+            this.grounded = true;
+            this.vy = 0;
+
+            const downhillDir = slope > 0 ? 1 : -1; // +tilt => lower side is right in canvas coordinates
+            if (slopeDeg > TANK_SLIDE_START_DEG) {
+                const slideFactor = Math.min(1, (slopeDeg - TANK_SLIDE_START_DEG) / (TANK_WALL_DETACH_DEG - TANK_SLIDE_START_DEG));
+                this.vx += downhillDir * (0.03 + slideFactor * 0.22);
+            }
+
+            // Ground friction
+            this.vx *= slopeDeg > TANK_SLIDE_START_DEG ? 0.975 : 0.72;
+            if (Math.abs(this.vx) < 0.03) this.vx = 0;
+            this.vx = Math.max(-3.6, Math.min(3.6, this.vx));
+            this.x += this.vx;
+
+            // Clamp to canvas edges
+            const clampedX = Math.max(TANK_WIDTH / 2, Math.min(width - TANK_WIDTH / 2, this.x));
+            if (clampedX !== this.x) this.vx = 0;
+            this.x = clampedX;
+
             this.settleOnTerrain();
         } else {
-            // Not enough support — slide toward ground
+            // Unstable/airborne: detach from wall and fall, with mild side drift down slope.
             this.grounded = false;
-            this.vy += GRAVITY * 1.5;
+            const downhillDir = slope > 0 ? 1 : -1;
+            if (slopeDeg > TANK_AIR_DRIFT_DEG) this.vx += downhillDir * 0.05;
+
+            this.vy += GRAVITY * 1.7;
+            this.vx *= 0.995;
+            this.vx = Math.max(-4.2, Math.min(4.2, this.vx));
+            this.x += this.vx;
             this.y += this.vy;
 
-            // Find slope to slide along
-            const lx = this.x - TANK_WIDTH / 2;
-            const rx = this.x + TANK_WIDTH / 2;
-            const ly = this._terrainAt(lx);
-            const ry = this._terrainAt(rx);
-
-            // Slide direction: toward the lower side
-            if (ly < ry) {
-                this.x -= 1.2; // slide left
-            } else {
-                this.x += 1.2; // slide right
-            }
-
-            // Clamp to canvas
-            this.x = Math.max(TANK_WIDTH / 2, Math.min(width - TANK_WIDTH / 2, this.x));
+            // Clamp to canvas edges
+            const clampedX = Math.max(TANK_WIDTH / 2, Math.min(width - TANK_WIDTH / 2, this.x));
+            if (clampedX !== this.x) this.vx = 0;
+            this.x = clampedX;
 
             // Land check
-            if (this.y >= centerTerrain) {
+            const centerTerrain = this._terrainAt(this.x);
+            const landedTilt = this._computeTilt();
+            const landedSupport = this._supportedFraction();
+            if (this.y >= centerTerrain - 1 && landedSupport > 0.45 && Math.abs(landedTilt) < (TANK_WALL_DETACH_DEG * Math.PI / 180)) {
+                this.vy = 0;
+                this.vx *= 0.75;
                 this.settleOnTerrain();
+            } else {
+                this.tilt = landedTilt;
             }
-
-            this.tilt = this._computeTilt();
         }
     }
 
@@ -100,6 +138,7 @@ class Tank {
         const newX = this.x + step;
         if (newX < TANK_WIDTH / 2 || newX > width - TANK_WIDTH / 2) return false;
         this.x = newX;
+        this.vx = 0;
         this.fuel = Math.max(0, this.fuel - FUEL_PER_STEP);
         this.settleOnTerrain();
         SoundEngine.play('move');

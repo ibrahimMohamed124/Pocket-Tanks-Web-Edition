@@ -28,6 +28,10 @@ const TERRAIN_SMOOTHING_PASSES = 3;
 const TERRAIN_SLOPE_PASSES = 3;
 const MAX_TERRAIN_STEP = 9;
 const TERRAIN_RELAX_MARGIN = 36;
+const TERRAIN_MELT_ACCEL = 0.035;
+const TERRAIN_MELT_PULL = 0.009;
+const TERRAIN_MELT_MAX_SPEED = 1.4;
+const TERRAIN_MELT_EPSILON = 0.05;
 
 const GRASS_DEPTH = 22;
 
@@ -39,6 +43,12 @@ let _terrainCanvas = null;
 let _terrainCtx = null;
 let _terrainDirty = true;
 let _stars = [];
+let terrainTarget = [];
+let terrainVelocity = [];
+let terrainMeltActive = false;
+let terrainMeltStart = 0;
+let terrainMeltEnd = -1;
+let _lastFrameTime = performance.now();
 
 function ensureTerrainCanvas() {
     if (!_terrainCanvas) {
@@ -94,6 +104,11 @@ function generateTerrain() {
         let y = Math.sin((x + o1) / 300) * 150 + Math.sin((x + o2) / 100) * 50 + Math.sin((x + o3) / 20) * 5;
         terrain[x] = clampTerrainY(baseHeight + y);
     }
+    terrainTarget = terrain.slice();
+    terrainVelocity = new Array(width).fill(0);
+    terrainMeltActive = false;
+    terrainMeltStart = 0;
+    terrainMeltEnd = -1;
     markTerrainDirty();
 }
 
@@ -281,62 +296,134 @@ function renderTerrain() {
     if (_terrainCanvas) ctx.drawImage(_terrainCanvas, 0, 0);
 }
 
-function smoothTerrainRange(startX, endX) {
+function smoothTerrainRange(startX, endX, surface = terrain) {
     const from = Math.max(2, startX);
     const to = Math.min(width - 3, endX);
+    if (from > to) return;
     for (let pass = 0; pass < TERRAIN_SMOOTHING_PASSES; pass++) {
-        const snapshot = terrain.slice(from - 2, to + 3);
+        const snapshot = surface.slice(from - 2, to + 3);
         for (let x = from; x <= to; x++) {
             const idx = x - from + 2;
             const smoothed =
                 (snapshot[idx - 2] + snapshot[idx - 1] * 2 + snapshot[idx] * 3 + snapshot[idx + 1] * 2 + snapshot[idx + 2]) / 9;
-            terrain[x] = clampTerrainY(smoothed);
+            surface[x] = clampTerrainY(smoothed);
         }
     }
 }
 
-function limitTerrainSlopeRange(startX, endX) {
+function limitTerrainSlopeRange(startX, endX, surface = terrain) {
     const from = Math.max(1, startX);
     const to = Math.min(width - 2, endX);
+    if (from > to) return;
     for (let pass = 0; pass < TERRAIN_SLOPE_PASSES; pass++) {
         for (let x = from + 1; x <= to; x++) {
-            const maxY = terrain[x - 1] + MAX_TERRAIN_STEP;
-            const minY = terrain[x - 1] - MAX_TERRAIN_STEP;
-            if (terrain[x] > maxY) terrain[x] = maxY;
-            if (terrain[x] < minY) terrain[x] = minY;
-            terrain[x] = clampTerrainY(terrain[x]);
+            const maxY = surface[x - 1] + MAX_TERRAIN_STEP;
+            const minY = surface[x - 1] - MAX_TERRAIN_STEP;
+            if (surface[x] > maxY) surface[x] = maxY;
+            if (surface[x] < minY) surface[x] = minY;
+            surface[x] = clampTerrainY(surface[x]);
         }
         for (let x = to - 1; x >= from; x--) {
-            const maxY = terrain[x + 1] + MAX_TERRAIN_STEP;
-            const minY = terrain[x + 1] - MAX_TERRAIN_STEP;
-            if (terrain[x] > maxY) terrain[x] = maxY;
-            if (terrain[x] < minY) terrain[x] = minY;
-            terrain[x] = clampTerrainY(terrain[x]);
+            const maxY = surface[x + 1] + MAX_TERRAIN_STEP;
+            const minY = surface[x + 1] - MAX_TERRAIN_STEP;
+            if (surface[x] > maxY) surface[x] = maxY;
+            if (surface[x] < minY) surface[x] = minY;
+            surface[x] = clampTerrainY(surface[x]);
         }
     }
 }
 
-function stabilizeTerrainRange(startX, endX) {
+function stabilizeTerrainRange(startX, endX, surface = terrain) {
     const from = Math.max(2, startX - TERRAIN_RELAX_MARGIN);
     const to = Math.min(width - 3, endX + TERRAIN_RELAX_MARGIN);
-    limitTerrainSlopeRange(from, to);
-    smoothTerrainRange(from, to);
-    limitTerrainSlopeRange(from, to);
-    smoothTerrainRange(from, to);
+    limitTerrainSlopeRange(from, to, surface);
+    smoothTerrainRange(from, to, surface);
+    limitTerrainSlopeRange(from, to, surface);
+    smoothTerrainRange(from, to, surface);
+}
+
+function queueTerrainMeltRange(startX, endX) {
+    const from = Math.max(0, startX);
+    const to = Math.min(width - 1, endX);
+    if (from > to) return;
+    if (!terrainMeltActive) {
+        terrainMeltStart = from;
+        terrainMeltEnd = to;
+        terrainMeltActive = true;
+        return;
+    }
+    terrainMeltStart = Math.min(terrainMeltStart, from);
+    terrainMeltEnd = Math.max(terrainMeltEnd, to);
+}
+
+function updateTerrainMelting(deltaMs) {
+    if (!terrainMeltActive || !terrain.length || !terrainTarget.length) return;
+
+    const frameScale = Math.min(2.5, Math.max(0.2, deltaMs / 16.67));
+    const from = Math.max(0, terrainMeltStart - 2);
+    const to = Math.min(width - 1, terrainMeltEnd + 2);
+    let changed = false;
+    let nextStart = width;
+    let nextEnd = -1;
+
+    for (let x = from; x <= to; x++) {
+        const targetY = terrainTarget[x];
+        const diff = targetY - terrain[x];
+
+        if (diff > TERRAIN_MELT_EPSILON) {
+            terrainVelocity[x] += (TERRAIN_MELT_ACCEL + diff * TERRAIN_MELT_PULL) * frameScale;
+            if (terrainVelocity[x] > TERRAIN_MELT_MAX_SPEED) terrainVelocity[x] = TERRAIN_MELT_MAX_SPEED;
+            const step = Math.min(diff, terrainVelocity[x] * frameScale);
+            terrain[x] = clampTerrainY(terrain[x] + step);
+            changed = true;
+        } else {
+            terrain[x] = targetY;
+            terrainVelocity[x] = 0;
+        }
+
+        const remaining = terrainTarget[x] - terrain[x];
+        if (remaining > TERRAIN_MELT_EPSILON) {
+            if (x < nextStart) nextStart = x;
+            if (x > nextEnd) nextEnd = x;
+        } else {
+            terrain[x] = terrainTarget[x];
+            terrainVelocity[x] = 0;
+        }
+    }
+
+    if (changed) {
+        const relaxFrom = Math.max(2, from - 2);
+        const relaxTo = Math.min(width - 3, to + 2);
+        smoothTerrainRange(relaxFrom, relaxTo, terrain);
+        limitTerrainSlopeRange(relaxFrom, relaxTo, terrain);
+        for (let x = relaxFrom; x <= relaxTo; x++) {
+            if (terrain[x] > terrainTarget[x]) terrain[x] = terrainTarget[x];
+        }
+        markTerrainDirty();
+    }
+
+    if (nextEnd >= nextStart) {
+        terrainMeltStart = nextStart;
+        terrainMeltEnd = nextEnd;
+    } else {
+        terrainMeltActive = false;
+    }
 }
 
 function destroyTerrain(cx, cy, radius) {
+    if (!terrainTarget.length) terrainTarget = terrain.slice();
+    if (!terrainVelocity.length || terrainVelocity.length !== width) terrainVelocity = new Array(width).fill(0);
+
     const startX = Math.max(0, Math.floor(cx - radius));
     const endX = Math.min(width - 1, Math.ceil(cx + radius));
     for (let x = startX; x <= endX; x++) {
         const dx = x - cx;
         const h = Math.sqrt(Math.max(0, radius * radius - dx * dx));
         const lowerY = clampTerrainY(cy + h);
-        if (terrain[x] < lowerY) terrain[x] = lowerY;
+        if (terrainTarget[x] < lowerY) terrainTarget[x] = lowerY;
     }
-    stabilizeTerrainRange(startX, endX);
-    markTerrainDirty();
-    tanks.forEach(t => t.settleOnTerrain());
+    stabilizeTerrainRange(startX, endX, terrainTarget);
+    queueTerrainMeltRange(startX - TERRAIN_RELAX_MARGIN, endX + TERRAIN_RELAX_MARGIN);
 }
 
 function createExplosion(x, y, radius, maxDamage, playSound = true) {
@@ -372,6 +459,7 @@ function initGame() {
     tanks = [new Tank(width * 0.15, '#ff2222', true), new Tank(width * 0.85, '#2266ff', false)];
     currentPlayer = 0; projectiles = []; particles = []; texts = [];
     gameState = 'playing';
+    _lastFrameTime = performance.now();
     document.getElementById('overlay').style.display = 'none';
     stopMusic();
     startMusic();
@@ -514,8 +602,10 @@ function updateUI() {
     if (s2) s2.style.display = tanks[1].shield > 0 ? 'block' : 'none';
 }
 
-function gameLoop() {
+function gameLoop(now = performance.now()) {
     requestAnimationFrame(gameLoop);
+    const deltaMs = Math.min(40, Math.max(8, now - _lastFrameTime));
+    _lastFrameTime = now;
     let cx = 0, cy = 0;
     if (cameraShake > 0) {
         cx = (Math.random() - 0.5) * cameraShake; cy = (Math.random() - 0.5) * cameraShake;
@@ -525,6 +615,7 @@ function gameLoop() {
     ctx.clearRect(0, 0, width, height);
     ctx.save(); ctx.translate(cx, cy);
     if (terrain.length > 0) {
+        updateTerrainMelting(deltaMs);
         renderTerrain();
     } else {
         ctx.fillStyle = '#000';
