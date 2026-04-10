@@ -5,11 +5,13 @@
 // ---- Background Music ----
 let bgMusic = null;
 let musicPlaying = false;
+let sfxLoaded = false;
 
 function startMusic() {
     if (musicPlaying) return;
     if (!bgMusic) {
         bgMusic = new Audio('sounds/ingame.mp3');
+        bgMusic.preload = 'auto';
         bgMusic.loop = true;
         bgMusic.volume = 0.5;
     }
@@ -38,11 +40,14 @@ const sfxFiles = {
 const sfxBuffers = {};
 
 function preloadSFX() {
+    if (sfxLoaded) return;
     for (const [name, path] of Object.entries(sfxFiles)) {
         const audio = new Audio(path);
         audio.preload = 'auto';
+        audio.load();
         sfxBuffers[name] = audio;
     }
+    sfxLoaded = true;
 }
 
 const SoundEngine = {
@@ -51,6 +56,7 @@ const SoundEngine = {
     },
 
     play: function (type) {
+        preloadSFX();
         const original = sfxBuffers[type];
         if (!original) {
             console.warn(`Sound "${type}" not found.`);

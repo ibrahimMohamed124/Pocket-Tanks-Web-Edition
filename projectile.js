@@ -77,9 +77,10 @@ class Projectile {
 
         // Default explosion
         this.active = false;
-        const { expRadius, damage, cameraShake } = this.weapon;
-        if (cameraShake) window.cameraShake = cameraShake;
-        createExplosion(this.x, this.y, expRadius || 30, damage || 15);
+        const { expRadius, damage, cameraShake: shakeAmount } = this.weapon;
+        if (shakeAmount) cameraShake = Math.max(cameraShake, shakeAmount);
+        playWeaponSound(this.weapon, 'explosion');
+        createExplosion(this.x, this.y, expRadius || 30, damage || 15, false);
         nextTurn();
     }
 

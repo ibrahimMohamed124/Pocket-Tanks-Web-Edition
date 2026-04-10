@@ -3,73 +3,102 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pocket Tanks: Next-Gen</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Pocket Tanks</title>
+    <link rel="stylesheet" href="style.css?v=20260410-3">
 </head>
 <body>
 
-    <canvas id="gameCanvas"></canvas>
+<canvas id="gameCanvas"></canvas>
 
-    <div id="ui-layer">
-        <div id="top-bar">
-            <div class="panel player-info">
-                <span style="color: #ff5555; font-weight: bold;">PLAYER 1 (RED)</span>
-                <div class="health-bar-container"><div id="p1-health" class="health-bar"></div></div>
-                <div id="p1-shield" class="shield-indicator" style="display:none;">🛡 SHIELD</div>
-            </div>
-            
-            <div id="game-title" class="panel">
-                POCKET TANKS
-            </div>
+<div id="ui-layer">
 
-            <div class="panel player-info" style="align-items: flex-end;">
-                <span style="color: #00aaff; font-weight: bold;">PLAYER 2 (BLUE)</span>
-                <div class="health-bar-container"><div id="p2-health" class="health-bar"></div></div>
-                <div id="p2-shield" class="shield-indicator" style="display:none;">🛡 SHIELD</div>
+    <!-- TOP BAR -->
+    <div id="top-bar">
+
+        <!-- Player 1 -->
+        <div class="player-info">
+            <div class="player-name" style="color:#ff5533;">Player 1</div>
+            <div class="health-bar-container">
+                <div id="p1-health" class="health-bar"></div>
+            </div>
+            <div id="p1-shield" class="shield-indicator" style="display:none;">&#x1F6E1; SHIELD ACTIVE</div>
+        </div>
+
+        <!-- Center title + weapon name -->
+        <div id="game-title">
+            <div class="title-main">Pocket Tanks</div>
+            <div id="weapon-display">Dirt Ball</div>
+        </div>
+
+        <!-- Player 2 -->
+        <div class="player-info player-info-right" style="align-items:flex-end;">
+            <div class="player-name" style="color:#44aaff;">Player 2</div>
+            <div class="health-bar-container">
+                <div id="p2-health" class="health-bar"></div>
+            </div>
+            <div id="p2-shield" class="shield-indicator" style="display:none;">&#x1F6E1; SHIELD ACTIVE</div>
+        </div>
+
+    </div>
+
+    <!-- TURN INDICATOR (floating) -->
+    <div id="turn-indicator">Player 1's Turn</div>
+
+    <!-- BOTTOM CONTROL BAR -->
+    <div id="bottom-bar">
+
+        <!-- Move -->
+        <div class="control-group">
+            <div class="ctrl-label">Move</div>
+            <div class="fuel-bar-wrap">
+                <div id="fuel-bar-fill"></div>
+            </div>
+            <div style="display:flex;gap:6px;">
+                <button id="move-left"  class="move-btn" title="A">&#9664; Left</button>
+                <button id="move-right" class="move-btn" title="D">Right &#9654;</button>
             </div>
         </div>
 
-        <div id="turn-indicator">Player 1's Turn</div>
-
-        <div id="bottom-bar" class="panel">
-            <div class="control-group">
-                <label>Weapon</label>
-                <select id="weapon-select"></select>
-            </div>
-            <div class="control-group">
-                <label>Angle (<span id="angle-val">45</span>&deg;)</label>
-                <input type="range" id="angle" min="0" max="180" value="45">
-            </div>
-            <div class="control-group">
-                <label>Power (<span id="power-val">50</span>)</label>
-                <input type="range" id="power" min="10" max="100" value="50">
-            </div>
-
-            <div class="control-group move-group">
-                <label>Move — Fuel: <span id="fuel-val">100%</span></label>
-                <div style="display:flex; gap:8px; justify-content:center;">
-                    <button id="move-left" class="move-btn" title="Move Left (A)">◀ LEFT</button>
-                    <button id="move-right" class="move-btn" title="Move Right (D)">RIGHT ▶</button>
-                </div>
-            </div>
-
-            <div class="control-group" style="justify-content: center;">
-                <button id="fire-btn" style="padding: 15px 30px; font-size: 18px; color: #fff; background: #c00; border-color: #f00;">FIRE (SPACE)</button>
-            </div>
+        <!-- Weapon -->
+        <div class="control-group">
+            <div class="ctrl-label">Weapon</div>
+            <select id="weapon-select"></select>
         </div>
-    </div>
 
-    <div id="overlay">
-        <h1>POCKET TANKS</h1>
-        <p>Next-Gen Web Edition</p>
-        <button id="start-btn" style="font-size: 24px; padding: 15px 40px; margin-top: 20px;">START GAME</button>
-    </div>
+        <!-- Angle -->
+        <div class="control-group">
+            <div class="ctrl-label">Angle</div>
+            <div class="value-box" id="angle-val">45</div>
+            <input type="range" id="angle" min="0" max="180" value="45" style="margin-top:5px;">
+        </div>
 
-    <script src="weapons.js"></script>
-    <script src="projectile.js"></script>
-    <script src="sound.js"></script>
-    <script src="tank.js"></script>
-    <script src="game.js"></script>
+        <!-- Power -->
+        <div class="control-group">
+            <div class="ctrl-label">Power</div>
+            <div class="value-box" id="power-val">50</div>
+            <input type="range" id="power" min="10" max="100" value="50" style="margin-top:5px;">
+        </div>
+
+        <!-- Fire -->
+        <div class="control-group" style="border-right:none; flex:1; align-items:center; justify-content:center;">
+            <button id="fire-btn">&#128293; FIRE</button>
+        </div>
+
+    </div>
+</div>
+
+<!-- OVERLAY -->
+<div id="overlay">
+    <h1>Pocket Tanks</h1>
+    <p>Next-Gen Web Edition</p>
+    <button id="start-btn">Start Game</button>
+</div>
+
+<script src="weapons.js?v=20260410-3"></script>
+<script src="projectile.js?v=20260410-3"></script>
+<script src="sound.js?v=20260410-3"></script>
+<script src="tank.js?v=20260410-3"></script>
+<script src="game.js?v=20260410-3"></script>
 
 </body>
 </html>

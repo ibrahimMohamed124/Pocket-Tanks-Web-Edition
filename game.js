@@ -2,7 +2,7 @@
 // GAME ENGINE & GRAPHICS
 // ==========================================
 const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+const ctx = canvas.getContext('2d', { alpha: false });
 let width, height;
 
 let terrain = [];
@@ -22,6 +22,52 @@ const FUEL_PER_STEP = 10;
 const MOVE_STEP = 15;
 const TANK_WIDTH = 40;
 const TANK_HEIGHT = 15;
+const MAX_PARTICLES = 300;
+const MAX_TEXTS = 24;
+const TERRAIN_SMOOTHING_PASSES = 3;
+const TERRAIN_SLOPE_PASSES = 3;
+const MAX_TERRAIN_STEP = 9;
+const TERRAIN_RELAX_MARGIN = 36;
+
+const GRASS_DEPTH = 22;
+
+// Pre-baked offscreen texture canvases — built once, reused every frame
+let _dirtCanvas = null;
+let _grassCanvas = null;
+let _skyCanvas = null;
+let _terrainCanvas = null;
+let _terrainCtx = null;
+let _terrainDirty = true;
+let _stars = [];
+
+function ensureTerrainCanvas() {
+    if (!_terrainCanvas) {
+        _terrainCanvas = document.createElement('canvas');
+        _terrainCtx = _terrainCanvas.getContext('2d', { alpha: false });
+    }
+    if (_terrainCanvas.width !== width || _terrainCanvas.height !== height) {
+        _terrainCanvas.width = width;
+        _terrainCanvas.height = height;
+        _terrainDirty = true;
+    }
+}
+
+function buildStars() {
+    _stars = Array.from({ length: 120 }, () => ({
+        x: Math.random(),
+        y: Math.random() * 0.65,
+        s: Math.random() * 1.5 + 0.4,
+        b: Math.random() * 0.7 + 0.3,
+    }));
+}
+
+function markTerrainDirty() {
+    _terrainDirty = true;
+}
+
+function clampTerrainY(y) {
+    return Math.max(height * 0.15, Math.min(height - GRASS_DEPTH - 2, y));
+}
 
 function resize() {
     width = window.innerWidth;
@@ -29,6 +75,13 @@ function resize() {
     canvas.width = width;
     canvas.height = height;
     ctx.imageSmoothingEnabled = true;
+    // Rebuild textures for the new viewport height to avoid vertical-repeat seams.
+    _dirtCanvas = null;
+    _grassCanvas = null;
+    _skyCanvas = null;
+    ensureTerrainCanvas();
+    buildStars();
+    markTerrainDirty();
 }
 window.addEventListener('resize', resize);
 resize();
@@ -39,73 +92,260 @@ function generateTerrain() {
     const o1 = Math.random() * 1000, o2 = Math.random() * 1000, o3 = Math.random() * 1000;
     for (let x = 0; x < width; x++) {
         let y = Math.sin((x + o1) / 300) * 150 + Math.sin((x + o2) / 100) * 50 + Math.sin((x + o3) / 20) * 5;
-        terrain[x] = baseHeight + y;
+        terrain[x] = clampTerrainY(baseHeight + y);
+    }
+    markTerrainDirty();
+}
+
+function buildTextures() {
+    const texH = Math.max(256, height);
+
+    // --- Dirt texture ---
+    _dirtCanvas = document.createElement('canvas');
+    _dirtCanvas.width = 256; _dirtCanvas.height = texH;
+    const dc = _dirtCanvas.getContext('2d');
+    // Seamless base color so vertical tiling doesn't produce horizontal seams.
+    dc.fillStyle = '#3a2414';
+    dc.fillRect(0, 0, 256, texH);
+    // Large-scale mottling (random blobs) to break flatness without directional banding.
+    for (let i = 0; i < Math.floor(260 * (texH / 256)); i++) {
+        const bx = Math.random() * 256;
+        const by = Math.random() * texH;
+        const br = Math.random() * 18 + 6;
+        dc.fillStyle = Math.random() > 0.5
+            ? `rgba(82,50,26,${Math.random() * 0.12})`
+            : `rgba(18,10,6,${Math.random() * 0.18})`;
+        dc.beginPath();
+        dc.arc(bx, by, br, 0, Math.PI * 2);
+        dc.fill();
+    }
+    // Noise stipple
+    for (let i = 0; i < Math.floor(3200 * (texH / 256)); i++) {
+        const nx = Math.random() * 256, ny = Math.random() * texH;
+        const bright = Math.random();
+        dc.fillStyle = bright > 0.85
+            ? `rgba(120,80,40,${Math.random()*0.35})`
+            : `rgba(0,0,0,${Math.random()*0.25})`;
+        dc.fillRect(nx, ny, Math.random()*3+1, Math.random()*2+1);
+    }
+    // Subtle strata (short segments) to avoid strong horizontal seam artifacts
+    for (let y = 16; y < texH; y += 16 + Math.floor(Math.random() * 10)) {
+        const segs = 3 + Math.floor(Math.random() * 3);
+        for (let s = 0; s < segs; s++) {
+            const x0 = Math.random() * 220;
+            const len = 24 + Math.random() * 60;
+            dc.strokeStyle = `rgba(80,45,20,${0.06 + Math.random() * 0.1})`;
+            dc.lineWidth = 0.7 + Math.random() * 0.7;
+            dc.beginPath();
+            dc.moveTo(x0, y + (Math.random() - 0.5) * 2);
+            dc.lineTo(x0 + len, y + (Math.random() - 0.5) * 3);
+            dc.stroke();
+        }
+    }
+    // Pebbles
+    for (let i = 0; i < Math.floor(80 * (texH / 256)); i++) {
+        const px = Math.random()*256, py = Math.random()*texH;
+        const r = Math.random()*3+1;
+        dc.fillStyle = `rgba(${60+Math.random()*40},${35+Math.random()*25},${15+Math.random()*10},0.6)`;
+        dc.beginPath(); dc.ellipse(px, py, r, r*0.7, Math.random()*Math.PI, 0, Math.PI*2); dc.fill();
+    }
+
+    // --- Grass texture ---
+    _grassCanvas = document.createElement('canvas');
+    _grassCanvas.width = 256; _grassCanvas.height = 64;
+    const gc = _grassCanvas.getContext('2d');
+    const gg = gc.createLinearGradient(0, 0, 0, 64);
+    gg.addColorStop(0,   '#6ed630');
+    gg.addColorStop(0.5, '#4db520');
+    gg.addColorStop(1,   '#2d7810');
+    gc.fillStyle = gg; gc.fillRect(0, 0, 256, 64);
+    // Grass blade variation
+    for (let i = 0; i < 1800; i++) {
+        const gx = Math.random()*256, gy = Math.random()*64;
+        gc.fillStyle = Math.random() > 0.5
+            ? `rgba(120,220,40,${Math.random()*0.3})`
+            : `rgba(20,80,10,${Math.random()*0.3})`;
+        gc.fillRect(gx, gy, 1, Math.random()*4+1);
+    }
+
+    // --- Sky texture ---
+    const skyH = Math.max(512, height);
+    _skyCanvas = document.createElement('canvas');
+    _skyCanvas.width = 4; _skyCanvas.height = skyH;
+    const sc = _skyCanvas.getContext('2d');
+    const sg = sc.createLinearGradient(0, 0, 0, skyH);
+    sg.addColorStop(0,    '#06081a');
+    sg.addColorStop(0.5,  '#12083a');
+    sg.addColorStop(1,    '#3a1060');
+    sc.fillStyle = sg; sc.fillRect(0, 0, 4, skyH);
+}
+
+function drawTerrainScene(targetCtx) {
+    if (!_dirtCanvas) buildTextures();
+    targetCtx.save();
+
+    // --- Sky ---
+    const skyPat = targetCtx.createPattern(_skyCanvas, 'repeat-x');
+    const sm = new DOMMatrix(); sm.a = width / 4;
+    skyPat.setTransform(sm);
+    targetCtx.fillStyle = skyPat;
+    targetCtx.fillRect(0, 0, width, height);
+
+    _stars.forEach(st => {
+        targetCtx.fillStyle = `rgba(255,255,255,${st.b})`;
+        targetCtx.beginPath();
+        targetCtx.arc(st.x * width, st.y * height, st.s, 0, Math.PI * 2);
+        targetCtx.fill();
+    });
+
+    // --- Dirt body ---
+    const dirtPat = targetCtx.createPattern(_dirtCanvas, 'repeat-x');
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, height);
+    for (let x = 0; x < width; x++) targetCtx.lineTo(x, terrain[x] + GRASS_DEPTH);
+    targetCtx.lineTo(width, height);
+    targetCtx.closePath();
+    targetCtx.fillStyle = dirtPat;
+    targetCtx.fill();
+    // Darken toward bottom with gradient overlay
+    const dg2 = targetCtx.createLinearGradient(0, 0, 0, height);
+    dg2.addColorStop(0, 'rgba(0,0,0,0.04)');
+    dg2.addColorStop(0.55, 'rgba(0,0,0,0.14)');
+    dg2.addColorStop(1, 'rgba(0,0,0,0.55)');
+    targetCtx.fillStyle = dg2;
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, height);
+    for (let x = 0; x < width; x++) targetCtx.lineTo(x, terrain[x] + GRASS_DEPTH);
+    targetCtx.lineTo(width, height);
+    targetCtx.closePath();
+    targetCtx.fill();
+
+    // --- Grass band ---
+    const grassPat = targetCtx.createPattern(_grassCanvas, 'repeat');
+    targetCtx.save();
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, terrain[0] + GRASS_DEPTH * 0.5);
+    for (let x = 1; x < width; x++) targetCtx.lineTo(x, terrain[x] + GRASS_DEPTH * 0.5);
+    targetCtx.lineWidth = GRASS_DEPTH;
+    targetCtx.lineCap = 'round';
+    targetCtx.lineJoin = 'round';
+    targetCtx.strokeStyle = grassPat;
+    targetCtx.stroke();
+    targetCtx.restore();
+
+    // --- Grass top highlight ---
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, terrain[0]);
+    for (let x = 1; x < width; x++) targetCtx.lineTo(x, terrain[x]);
+    targetCtx.lineWidth = 3;
+    targetCtx.strokeStyle = '#90ef50';
+    targetCtx.stroke();
+    // Second subtle line for depth
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, terrain[0] + 3);
+    for (let x = 1; x < width; x++) targetCtx.lineTo(x, terrain[x] + 3);
+    targetCtx.lineWidth = 1.5;
+    targetCtx.strokeStyle = 'rgba(30,120,10,0.6)';
+    targetCtx.stroke();
+
+    // --- Grass tufts (small blade clusters) ---
+    targetCtx.save();
+    for (let x = 8; x < width - 8; x += 7 + Math.floor((Math.sin(x * 0.3) + 1) * 4)) {
+        const ty = terrain[x];
+        const tuftH = 4 + Math.sin(x * 0.7) * 2;
+        targetCtx.strokeStyle = Math.sin(x) > 0 ? '#7de035' : '#5ab525';
+        targetCtx.lineWidth = 1.2;
+        targetCtx.beginPath();
+        targetCtx.moveTo(x, ty);
+        targetCtx.lineTo(x - 2, ty - tuftH);
+        targetCtx.stroke();
+        targetCtx.beginPath();
+        targetCtx.moveTo(x, ty);
+        targetCtx.lineTo(x + 2, ty - tuftH - 1);
+        targetCtx.stroke();
+    }
+    targetCtx.restore();
+
+    targetCtx.restore();
+}
+
+function rebuildTerrainCache() {
+    ensureTerrainCanvas();
+    if (!terrain.length) return;
+    drawTerrainScene(_terrainCtx);
+    _terrainDirty = false;
+}
+
+function renderTerrain() {
+    if (_terrainDirty) rebuildTerrainCache();
+    if (_terrainCanvas) ctx.drawImage(_terrainCanvas, 0, 0);
+}
+
+function smoothTerrainRange(startX, endX) {
+    const from = Math.max(2, startX);
+    const to = Math.min(width - 3, endX);
+    for (let pass = 0; pass < TERRAIN_SMOOTHING_PASSES; pass++) {
+        const snapshot = terrain.slice(from - 2, to + 3);
+        for (let x = from; x <= to; x++) {
+            const idx = x - from + 2;
+            const smoothed =
+                (snapshot[idx - 2] + snapshot[idx - 1] * 2 + snapshot[idx] * 3 + snapshot[idx + 1] * 2 + snapshot[idx + 2]) / 9;
+            terrain[x] = clampTerrainY(smoothed);
+        }
     }
 }
 
-const GRASS_DEPTH = 18; // how thick the green layer is
+function limitTerrainSlopeRange(startX, endX) {
+    const from = Math.max(1, startX);
+    const to = Math.min(width - 2, endX);
+    for (let pass = 0; pass < TERRAIN_SLOPE_PASSES; pass++) {
+        for (let x = from + 1; x <= to; x++) {
+            const maxY = terrain[x - 1] + MAX_TERRAIN_STEP;
+            const minY = terrain[x - 1] - MAX_TERRAIN_STEP;
+            if (terrain[x] > maxY) terrain[x] = maxY;
+            if (terrain[x] < minY) terrain[x] = minY;
+            terrain[x] = clampTerrainY(terrain[x]);
+        }
+        for (let x = to - 1; x >= from; x--) {
+            const maxY = terrain[x + 1] + MAX_TERRAIN_STEP;
+            const minY = terrain[x + 1] - MAX_TERRAIN_STEP;
+            if (terrain[x] > maxY) terrain[x] = maxY;
+            if (terrain[x] < minY) terrain[x] = minY;
+            terrain[x] = clampTerrainY(terrain[x]);
+        }
+    }
+}
 
-function renderTerrain() {
-    ctx.save();
-
-    // --- Sky ---
-    const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
-    skyGrad.addColorStop(0, '#0a0a1a');
-    skyGrad.addColorStop(1, '#2a1a2a');
-    ctx.fillStyle = skyGrad;
-    ctx.fillRect(0, 0, width, height);
-
-    // --- Dirt: everything below terrain surface ---
-    ctx.beginPath();
-    ctx.moveTo(0, height);
-    for (let x = 0; x < width; x++) ctx.lineTo(x, terrain[x] + GRASS_DEPTH);
-    ctx.lineTo(width, height);
-    ctx.closePath();
-    const dirtGrad = ctx.createLinearGradient(0, height * 0.4, 0, height);
-    dirtGrad.addColorStop(0, '#4a2e18');
-    dirtGrad.addColorStop(0.4, '#2e1a0e');
-    dirtGrad.addColorStop(1, '#0e0805');
-    ctx.fillStyle = dirtGrad;
-    ctx.fill();
-
-    // --- Grass layer: band between surface and surface+GRASS_DEPTH ---
-    ctx.beginPath();
-    ctx.moveTo(0, terrain[0]);
-    for (let x = 0; x < width; x++) ctx.lineTo(x, terrain[x]);
-    ctx.lineTo(width, terrain[width - 1]);
-    for (let x = width - 1; x >= 0; x--) ctx.lineTo(x, terrain[x] + GRASS_DEPTH);
-    ctx.closePath();
-    const grassGrad = ctx.createLinearGradient(0, 0, 0, height);
-    grassGrad.addColorStop(0, '#5abf2a');
-    grassGrad.addColorStop(1, '#2d6612');
-    ctx.fillStyle = grassGrad;
-    ctx.fill();
-
-    // --- Bright top edge line ---
-    ctx.beginPath();
-    ctx.moveTo(0, terrain[0]);
-    for (let x = 1; x < width; x++) ctx.lineTo(x, terrain[x]);
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = '#7fe040';
-    ctx.stroke();
-
-    ctx.restore();
+function stabilizeTerrainRange(startX, endX) {
+    const from = Math.max(2, startX - TERRAIN_RELAX_MARGIN);
+    const to = Math.min(width - 3, endX + TERRAIN_RELAX_MARGIN);
+    limitTerrainSlopeRange(from, to);
+    smoothTerrainRange(from, to);
+    limitTerrainSlopeRange(from, to);
+    smoothTerrainRange(from, to);
 }
 
 function destroyTerrain(cx, cy, radius) {
-    for (let x = Math.max(0, Math.floor(cx - radius)); x < Math.min(width, Math.ceil(cx + radius)); x++) {
-        const dx = x - cx, h = Math.sqrt(radius * radius - dx * dx), lowerY = cy + h;
+    const startX = Math.max(0, Math.floor(cx - radius));
+    const endX = Math.min(width - 1, Math.ceil(cx + radius));
+    for (let x = startX; x <= endX; x++) {
+        const dx = x - cx;
+        const h = Math.sqrt(Math.max(0, radius * radius - dx * dx));
+        const lowerY = clampTerrainY(cy + h);
         if (terrain[x] < lowerY) terrain[x] = lowerY;
     }
+    stabilizeTerrainRange(startX, endX);
+    markTerrainDirty();
     tanks.forEach(t => t.settleOnTerrain());
 }
 
-function createExplosion(x, y, radius, maxDamage) {
-    SoundEngine.play('thud');
+function createExplosion(x, y, radius, maxDamage, playSound = true) {
+    if (playSound) SoundEngine.play('thud');
     destroyTerrain(x, y, radius);
-    for (let i = 0; i < radius / 2; i++)
+    for (let i = 0; i < Math.min(24, Math.max(8, Math.floor(radius / 3))); i++)
         spawnParticle(x, y, Math.random() > 0.5 ? '#ff5500' : '#ffff00', Math.random() * 5 + 2);
     texts.push({ x, y, isRing: true, radius, age: 0 });
+    if (texts.length > MAX_TEXTS) texts.splice(0, texts.length - MAX_TEXTS);
     tanks.forEach(t => {
         if (t.hp <= 0) return;
         const dist = Math.hypot(t.x - x, t.y - y);
@@ -115,6 +355,7 @@ function createExplosion(x, y, radius, maxDamage) {
 }
 
 function spawnParticle(x, y, color, size, vx = null, vy = null) {
+    if (particles.length >= MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES + 1);
     particles.push({
         x, y,
         vx: vx !== null ? vx : (Math.random() - 0.5) * 10,
@@ -126,6 +367,7 @@ function spawnParticle(x, y, color, size, vx = null, vy = null) {
 function initGame() {
     buildWeaponSelect();
     SoundEngine.init();
+    if (!_dirtCanvas || !_grassCanvas || !_skyCanvas) buildTextures();
     generateTerrain();
     tanks = [new Tank(width * 0.15, '#ff2222', true), new Tank(width * 0.85, '#2266ff', false)];
     currentPlayer = 0; projectiles = []; particles = []; texts = [];
@@ -172,12 +414,14 @@ function fire() {
     }
 
     gameState = 'animating';
-    SoundEngine.init();
     SoundEngine.play('pew');
 
     const rad = -tank.angle * Math.PI / 180;
-    const bx = tank.x + Math.cos(rad) * 25;
-    const by = tank.y - TANK_HEIGHT + 2 + Math.sin(rad) * 25;
+    // Barrel pivot is at tank center offset by tilt, then world-angle
+    const pivotX = tank.x + Math.cos(tank.tilt) * 0 - Math.sin(tank.tilt) * (-(TANK_HEIGHT - 2));
+    const pivotY = tank.y + Math.sin(tank.tilt) * 0 + Math.cos(tank.tilt) * (-(TANK_HEIGHT - 2));
+    const bx = pivotX + Math.cos(rad) * 25;
+    const by = pivotY + Math.sin(rad) * 25;
     spawnParticle(bx, by, weapon.color || '#ffffaa', 8);
     projectiles.push(new Projectile(bx, by, tank.angle, tank.power, tank.weapon));
 }
@@ -191,8 +435,16 @@ function moveCurrentTank(dir) {
 function updateMoveButtons() {
     const fuel = tanks[currentPlayer].fuel;
     const pct = Math.round((fuel / MAX_FUEL) * 100);
-    const fuelEl = document.getElementById('fuel-val');
-    if (fuelEl) fuelEl.innerText = pct + '%';
+    // Fuel bar fill
+    const fill = document.getElementById('fuel-bar-fill');
+    if (fill) {
+        fill.style.width = pct + '%';
+        fill.style.background = pct > 50
+            ? 'linear-gradient(90deg,#2a9a10,#6adf30)'
+            : pct > 25
+                ? 'linear-gradient(90deg,#8a7010,#e0c030)'
+                : 'linear-gradient(90deg,#8a1010,#e03030)';
+    }
     const leftBtn = document.getElementById('move-left');
     const rightBtn = document.getElementById('move-right');
     if (leftBtn) leftBtn.disabled = fuel <= 0 || gameState !== 'playing';
@@ -220,6 +472,8 @@ function syncControlsToTank() {
     const t = tanks[currentPlayer];
     angleInput.value = t.angle; powerInput.value = t.power; weaponSelect.value = t.weapon;
     angleVal.innerText = t.angle; powerVal.innerText = t.power;
+    const wd = document.getElementById('weapon-display');
+    if (wd) wd.innerText = getWeapon(t.weapon).name || t.weapon;
 }
 
 function updateTankFromControls() {
@@ -227,6 +481,8 @@ function updateTankFromControls() {
     const t = tanks[currentPlayer];
     t.angle = parseInt(angleInput.value); t.power = parseInt(powerInput.value); t.weapon = weaponSelect.value;
     angleVal.innerText = t.angle; powerVal.innerText = t.power;
+    const wd = document.getElementById('weapon-display');
+    if (wd) wd.innerText = getWeapon(t.weapon).name || t.weapon;
 }
 
 angleInput.addEventListener('input', updateTankFromControls);
@@ -265,9 +521,16 @@ function gameLoop() {
         cx = (Math.random() - 0.5) * cameraShake; cy = (Math.random() - 0.5) * cameraShake;
         cameraShake *= 0.9; if (cameraShake < 0.5) cameraShake = 0;
     }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, width, height);
     ctx.save(); ctx.translate(cx, cy);
-    if (terrain.length > 0) renderTerrain();
-    tanks.forEach(t => t.draw());
+    if (terrain.length > 0) {
+        renderTerrain();
+    } else {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, width, height);
+    }
+    tanks.forEach(t => { t.update(); t.draw(); });
     projectiles.forEach(p => { p.update(); p.draw(); });
     projectiles = projectiles.filter(p => p.active);
     for (let i = particles.length - 1; i >= 0; i--) {

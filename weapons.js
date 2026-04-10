@@ -3,19 +3,24 @@
 // ==========================================
 // Each weapon definition:
 // {
-//   id: string           — matches <option value>
-//   name: string         — display name
-//   color: string        — projectile color
-//   radius: number       — projectile draw radius
-//   expRadius: number    — explosion terrain radius
-//   damage: number       — max damage
-//   cameraShake: number  — shake amount
-//   projectileCount: number — how many projectiles (default 1)
-//   onFire(tank)         — optional override: custom fire logic, returns false to skip default projectile
-//   onCollision(proj)    — optional override: custom collision logic, returns false to skip default explosion
-//   onUpdate(proj)       — optional per-frame logic (e.g. homing), return false to skip default movement
-//   trailColor: string   — particle trail color
+//   id: string              — matches <option value>
+//   name: string            — display name
+//   color: string           — projectile color
+//   radius: number          — projectile draw radius
+//   expRadius: number       — explosion terrain radius
+//   damage: number          — max damage
+//   cameraShake: number     — shake amount
+//   trailColor: string      — particle trail color
+//   sounds: {
+//     fire: string          — path to fire sound   e.g. 'sounds/weapons/pew.mp3'
+//     explosion: string     — path to explosion sound
+//     bounce: string        — (optional) path to bounce sound
+//     special: string       — (optional) path to any special sound
+//   }
 //   initVelocity(vx,vy,power) — optional velocity modifier
+//   onFire(tank)            — optional: custom fire logic, return false to skip default projectile
+//   onCollision(proj)       — optional: custom collision, return false to skip default explosion
+//   onUpdate(proj)          — optional: per-frame logic, return false to skip default movement
 // }
 
 const WEAPONS = {
@@ -25,6 +30,10 @@ const WEAPONS = {
         color: '#8b5a2b', radius: 4,
         expRadius: 30, damage: 15, cameraShake: 0,
         trailColor: '#6b3a1b',
+        sounds: {
+            fire:      'sounds/weapons/fire_default.mp3',
+            explosion: 'sounds/weapons/explosion_small.mp3',
+        },
     },
 
     mortar: {
@@ -32,6 +41,10 @@ const WEAPONS = {
         color: '#888', radius: 6,
         expRadius: 55, damage: 22, cameraShake: 8,
         trailColor: '#555',
+        sounds: {
+            fire:      'sounds/weapons/fire_mortar.mp3',
+            explosion: 'sounds/weapons/explosion_medium.mp3',
+        },
     },
 
     rocket: {
@@ -39,6 +52,10 @@ const WEAPONS = {
         color: '#ff3300', radius: 5,
         expRadius: 45, damage: 20, cameraShake: 10,
         trailColor: '#ffaa00',
+        sounds: {
+            fire:      'sounds/weapons/fire_rocket.mp3',
+            explosion: 'sounds/weapons/explosion_medium.mp3',
+        },
         initVelocity(vx, vy) { return { vx: vx * 1.5, vy: vy * 0.5 }; },
     },
 
@@ -47,6 +64,10 @@ const WEAPONS = {
         color: '#ff00ff', radius: 8,
         expRadius: 120, damage: 35, cameraShake: 25,
         trailColor: '#ff44ff',
+        sounds: {
+            fire:      'sounds/weapons/fire_bigdaddy.mp3',
+            explosion: 'sounds/weapons/explosion_huge.mp3',
+        },
     },
 
     bouncy: {
@@ -54,13 +75,18 @@ const WEAPONS = {
         color: '#00ff00', radius: 4,
         expRadius: 25, damage: 12, cameraShake: 0,
         trailColor: '#00cc00',
+        sounds: {
+            fire:      'sounds/weapons/fire_default.mp3',
+            explosion: 'sounds/weapons/explosion_small.mp3',
+            bounce:    'sounds/weapons/bounce.mp3',
+        },
         maxBounces: 5,
         onCollision(proj) {
             if (proj._bounces < (this.maxBounces || 5)) {
                 proj._bounces++;
                 proj.vy = -proj.vy * 0.6;
                 proj.y = terrain[Math.floor(proj.x)] - 1;
-                SoundEngine.play('ding');
+                playWeaponSound(this, 'bounce');
                 for (let i = 0; i < 3; i++) spawnParticle(proj.x, proj.y, '#00ff00', 2);
                 return false; // skip default explosion
             }
@@ -73,11 +99,14 @@ const WEAPONS = {
         color: '#ffdd00', radius: 5,
         expRadius: 65, damage: 28, cameraShake: 18,
         trailColor: '#ffaa00',
-        projectileCount: 3,
-        projectileDelay: 300, // ms between each bomb
+        sounds: {
+            fire:      'sounds/weapons/fire_airstrike.mp3',
+            explosion: 'sounds/weapons/explosion_large.mp3',
+            special:   'sounds/weapons/airstrike_incoming.mp3',
+        },
         onFire(tank) {
             gameState = 'animating';
-            SoundEngine.play('pew');
+            playWeaponSound(this, 'special');
             for (let i = 0; i < 3; i++) {
                 setTimeout(() => {
                     const offsetX = tank.x + (Math.random() - 0.5) * 100;
@@ -93,9 +122,13 @@ const WEAPONS = {
         color: '#00ccff', radius: 0,
         expRadius: 0, damage: 0, cameraShake: 0,
         trailColor: '#00ccff',
+        sounds: {
+            fire:      'sounds/weapons/shield_activate.mp3',
+            explosion: '', // no explosion
+        },
         onFire(tank) {
             tank.shield = Math.min(MAX_SHIELD, tank.shield + MAX_SHIELD);
-            SoundEngine.play('ding');
+            playWeaponSound(this, 'fire');
             texts.push({ x: tank.x, y: tank.y - 40, text: 'SHIELD UP!', color: '#00ccff', age: 0 });
             gameState = 'animating';
             nextTurn();
@@ -108,16 +141,18 @@ const WEAPONS = {
         color: '#ffaa00', radius: 5,
         expRadius: 20, damage: 10, cameraShake: 5,
         trailColor: '#ff8800',
+        sounds: {
+            fire:      'sounds/weapons/fire_mortar.mp3',
+            explosion: 'sounds/weapons/explosion_cluster.mp3',
+            special:   'sounds/weapons/cluster_split.mp3',
+        },
         onCollision(proj) {
-            // Spawn 5 mini bombs on first impact
-            SoundEngine.play('thud');
+            playWeaponSound(this, 'special');
             for (let i = 0; i < 5; i++) {
-                const angle = 60 + i * 12;
-                const mini = new Projectile(proj.x, proj.y, angle, 30, '_clustermini');
-                projectiles.push(mini);
+                const angle = 55 + i * 14;
+                projectiles.push(new Projectile(proj.x, proj.y, angle, 30, '_clustermini'));
             }
-            // Ring fx
-            texts.push({ x: proj.x, y: proj.y, isRing: true, radius: proj.weapon.expRadius, age: 0 });
+            texts.push({ x: proj.x, y: proj.y, isRing: true, radius: this.expRadius, age: 0 });
             return false; // skip default explosion — minis handle it
         },
     },
@@ -127,6 +162,10 @@ const WEAPONS = {
         color: '#ff6600', radius: 3,
         expRadius: 20, damage: 10, cameraShake: 3,
         trailColor: '#ff6600',
+        sounds: {
+            fire:      '',
+            explosion: 'sounds/weapons/explosion_small.mp3',
+        },
     },
 
     napalm: {
@@ -134,11 +173,13 @@ const WEAPONS = {
         color: '#ff4400', radius: 6,
         expRadius: 40, damage: 18, cameraShake: 8,
         trailColor: '#ff8800',
+        sounds: {
+            fire:      'sounds/weapons/fire_rocket.mp3',
+            explosion: 'sounds/weapons/explosion_napalm.mp3',
+        },
         onCollision(proj) {
-            // Standard explosion + fire particles that linger and keep dealing damage
             createExplosion(proj.x, proj.y, this.expRadius, this.damage);
-            // Spawn fire particles horizontally
-            for (let i = 0; i < 12; i++) {
+            for (let i = 0; i < 14; i++) {
                 spawnFireParticle(proj.x + (Math.random() - 0.5) * this.expRadius, proj.y);
             }
             nextTurn();
@@ -151,12 +192,55 @@ const WEAPONS = {
         color: '#00ffff', radius: 2,
         expRadius: 10, damage: 40, cameraShake: 5,
         trailColor: '#00ffff',
+        sounds: {
+            fire:      'sounds/weapons/fire_sniper.mp3',
+            explosion: 'sounds/weapons/explosion_sniper.mp3',
+        },
         initVelocity(vx, vy) { return { vx: vx * 2.5, vy: vy * 2.5 }; },
     },
 
 };
 
-// ---- Helper: spawn a fire particle (used by napalm) ----
+// ==========================================
+// SOUND HELPER
+// ==========================================
+// Plays a weapon's sound by key ('fire', 'explosion', 'bounce', 'special')
+// Falls back to SoundEngine defaults if path is empty
+const weaponSoundCache = {};
+const missingWeaponSounds = new Set();
+
+function playFallbackWeaponSound(key) {
+    if (key === 'explosion') SoundEngine.play('thud');
+    if (key === 'fire') SoundEngine.play('pew');
+    if (key === 'bounce') SoundEngine.play('ding');
+}
+
+function playWeaponSound(weapon, key) {
+    const path = weapon.sounds && weapon.sounds[key];
+    if (!path || missingWeaponSounds.has(path)) {
+        playFallbackWeaponSound(key);
+        return;
+    }
+
+    if (!weaponSoundCache[path]) {
+        const audio = new Audio(path);
+        audio.preload = 'auto';
+        audio.addEventListener('error', () => missingWeaponSounds.add(path), { once: true });
+        audio.load();
+        weaponSoundCache[path] = audio;
+    }
+
+    const audio = weaponSoundCache[path].cloneNode();
+    audio.volume = 0.7;
+    audio.play().catch(() => {
+        missingWeaponSounds.add(path);
+        playFallbackWeaponSound(key);
+    });
+}
+
+// ==========================================
+// HELPERS
+// ==========================================
 function spawnFireParticle(x, y) {
     particles.push({
         x, y,
@@ -165,16 +249,13 @@ function spawnFireParticle(x, y) {
         color: Math.random() > 0.5 ? '#ff4400' : '#ffaa00',
         size: Math.random() * 5 + 2,
         life: 1.0,
-        isFire: true,
     });
 }
 
-// ---- Weapon lookup ----
 function getWeapon(id) {
     return WEAPONS[id] || WEAPONS['dirtball'];
 }
 
-// ---- Build select options from WEAPONS (skip internal _ entries) ----
 function buildWeaponSelect() {
     const sel = document.getElementById('weapon-select');
     if (!sel) return;
